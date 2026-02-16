@@ -1,0 +1,309 @@
+:root {
+    --bg-color: #1a1a1a;
+    --text-color: #e0e0e0;
+    --card-bg: #2d2d2d;
+    --primary: #bb86fc;
+    --error: #cf6679;
+    --spacing: 1rem;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Courier New', monospace;
+}
+
+body {
+    background: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    padding: var(--spacing);
+    border-bottom: 2px solid var(--text-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-color);
+    flex-shrink: 0;
+}
+
+.logo {
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+#logout-btn {
+    background: transparent;
+    border: 1px solid var(--error);
+    color: var(--error);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    display: none;
+}
+
+.container {
+    flex: 1;
+    display: flex;
+    /* Changed to flex */
+    flex-direction: column;
+    /* Ensure vertical stacking */
+    padding: var(--spacing);
+    height: calc(100vh - 80px);
+    overflow: hidden;
+    width: 100%;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+#app {
+    height: 100%;
+    width: 100%;
+}
+
+/* Dashboard Grid */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 350px;
+    grid-template-rows: 1fr;
+    /* Force row to respect container height */
+    gap: 1.5rem;
+    height: 100%;
+    width: 100%;
+}
+
+/* Base Card Style */
+.card {
+    background: var(--card-bg);
+    padding: 1.5rem;
+    border: 2px solid var(--text-color);
+    box-shadow: 4px 4px 0px var(--text-color);
+}
+
+/* Left Column: Users */
+.col-users {
+    height: 100%;
+    overflow-y: auto;
+    min-height: 0;
+    /* Required for grid scrolling */
+}
+
+/* Middle Column: Feed */
+.col-feed {
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+    /* for scrollbar spacing */
+    min-height: 0;
+    /* Required for grid scrolling */
+    display: flex;
+    /* Use flex column to stack chat and posts properly */
+    flex-direction: column;
+}
+
+/* Right Column: Create Post */
+.col-create {
+    align-self: start;
+    /* Don't stretch */
+    position: sticky;
+    top: 0;
+}
+
+/* Components */
+h2 {
+    margin-bottom: 1.5rem;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--text-color);
+    padding-bottom: 0.5rem;
+    font-size: 1.2rem;
+}
+
+h3 {
+    font-size: 1.1rem;
+}
+
+.input-group {
+    margin-bottom: 1rem;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.input-group input,
+.input-group textarea,
+.input-group select {
+    width: 100%;
+    padding: 0.8rem;
+    background: #000;
+    border: 1px solid var(--text-color);
+    color: var(--text-color);
+}
+
+.input-group input:focus,
+.input-group textarea:focus,
+.input-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.btn {
+    width: 100%;
+    padding: 1rem;
+    background: var(--text-color);
+    color: var(--bg-color);
+    border: none;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+    margin-top: 1rem;
+}
+
+.btn:hover {
+    background: var(--primary);
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary);
+    text-decoration: underline;
+    cursor: pointer;
+    margin-top: 1rem;
+    display: block;
+    width: 100%;
+    text-align: center;
+}
+
+.error-msg {
+    color: var(--error);
+    margin-bottom: 1rem;
+    border: 1px solid var(--error);
+    padding: 0.5rem;
+    text-align: center;
+    display: none;
+    font-size: 0.9rem;
+}
+
+/* Post List */
+.post {
+    border: 1px solid var(--text-color);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    background: var(--card-bg);
+}
+
+.post-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+    color: #888;
+    border-bottom: 1px dashed #444;
+    padding-bottom: 0.5rem;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #888;
+}
+
+/* Sidebar & Category Styles */
+.sidebar-section {
+    padding-right: 0.5rem;
+}
+
+.category-btn {
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+    transition: all 0.2s ease;
+    color: #aaa;
+}
+
+.category-btn:hover {
+    background: #2d2d2d;
+    color: #fff;
+    padding-left: 1.2rem;
+    /* Slide effect */
+}
+
+.category-btn.active {
+    background: rgba(187, 134, 252, 0.1);
+    border-left-color: var(--primary);
+    color: var(--primary);
+    font-weight: bold;
+}
+
+/* ============================================
+   TYPING INDICATOR
+   ============================================ */
+.typing-indicator {
+    padding: 0 1rem;
+    font-size: 0.8rem;
+    color: #888;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+}
+
+.typing-indicator.visible {
+    max-height: 2rem;
+    opacity: 1;
+    padding: 0.4rem 1rem;
+}
+
+.typing-name {
+    color: var(--primary);
+    font-weight: bold;
+}
+
+.typing-dots {
+    display: inline-flex;
+    gap: 1px;
+    margin-left: 1px;
+}
+
+.typing-dots span {
+    display: inline-block;
+    animation: typing-bounce 1.4s infinite ease-in-out both;
+    font-weight: bold;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: 0s; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-bounce {
+    0%, 80%, 100% {
+        opacity: 0.3;
+        transform: translateY(0);
+    }
+    40% {
+        opacity: 1;
+        transform: translateY(-3px);
+    }
+}

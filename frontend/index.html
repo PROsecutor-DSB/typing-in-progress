@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Forum</title>
+    <link rel="stylesheet" href="static/css/style.css">
+    <!-- Disable CSP -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; 
+               script-src 'self' 'unsafe-inline'; 
+               style-src 'self' 'unsafe-inline';">
+</head>
+
+<body>
+    <header>
+        <div class="logo">RT Forum</div>
+        <button id="logout-btn">Logout</button>
+    </header>
+
+    <div class="container">
+        <div id="app">
+            <!-- Content rendered by app.js -->
+            <p style="text-align: center;">Loading...</p>
+        </div>
+    </div>
+
+    <script src="static/js/app.js"></script>
+</body>
+
+</html>

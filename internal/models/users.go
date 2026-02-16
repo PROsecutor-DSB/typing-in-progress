@@ -1,0 +1,66 @@
+package models
+
+import (
+	"database/sql"
+	"time"
+)
+
+type User struct {
+	ID        int
+	Nickname  string
+	Age       int
+	Gender    string
+	FirstName string
+	LastName  string
+	Email     string
+	Password  string
+	CreatedAt time.Time
+}
+
+type UserModel struct {
+	DB *sql.DB
+}
+
+func (m *UserModel) Create(u *User) error {
+	stmt := `INSERT INTO users (nickname, age, gender, first_name, last_name, email, password, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err := m.DB.Exec(stmt, u.Nickname, u.Age, u.Gender, u.FirstName, u.LastName, u.Email, u.Password, time.Now())
+	return err
+}
+
+func (m *UserModel) GetByEmail(email string) (*User, error) {
+	stmt := `SELECT id, nickname, age, gender, first_name, last_name, email, password, created_at FROM users WHERE email = ?`
+	row := m.DB.QueryRow(stmt, email)
+
+	u := &User{}
+	err := row.Scan(&u.ID, &u.Nickname, &u.Age, &u.Gender, &u.FirstName, &u.LastName, &u.Email, &u.Password, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func (m *UserModel) GetByNickname(nickname string) (*User, error) {
+	stmt := `SELECT id, nickname, age, gender, first_name, last_name, email, password, created_at FROM users WHERE nickname = ?`
+	row := m.DB.QueryRow(stmt, nickname)
+
+	u := &User{}
+	err := row.Scan(&u.ID, &u.Nickname, &u.Age, &u.Gender, &u.FirstName, &u.LastName, &u.Email, &u.Password, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func (m *UserModel) GetByID(id int) (*User, error) {
+	stmt := `SELECT id, nickname, age, gender, first_name, last_name, email, password, created_at FROM users WHERE id = ?`
+	row := m.DB.QueryRow(stmt, id)
+
+	u := &User{}
+	err := row.Scan(&u.ID, &u.Nickname, &u.Age, &u.Gender, &u.FirstName, &u.LastName, &u.Email, &u.Password, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
