@@ -96,6 +96,7 @@ func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) 
 	h.Hub.Broadcast <- msgBytes
 
 	// Return response to caller
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"reaction": actionResult,

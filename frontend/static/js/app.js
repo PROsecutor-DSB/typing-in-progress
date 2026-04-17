@@ -1,3 +1,13 @@
+// Utility to prevent XSS
+function escapeHTML(str) {
+    if (typeof str !== 'string') return str;
+    return str.replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#39;');
+}
+
 // State
 const state = {
     isLoggedIn: document.cookie.includes('session_token'),
@@ -22,11 +32,19 @@ const logoutBtn = document.getElementById('logout-btn');
 
 const CATEGORIES = ["General", "Tech", "Random", "Blockchain", "Startups", "Economics", "Science", "Music", "Movies"];
 
-// Initialization
-function initApp() {
+async function fetchUserInfo() {
+    try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+            state.user = await res.json(); // { id, nickname }
+        }
+    } catch (_) {}
+}
+
+async function initApp() {
     if (state.isLoggedIn) {
         logoutBtn.style.display = 'block';
-        fetchUserInfo();
+        await fetchUserInfo();   // know who we are BEFORE rendering users
         initWebSocket();
         renderHome();
     } else {
@@ -40,17 +58,19 @@ if (document.readyState === 'loading') {
     initApp();
 }
 
-async function fetchUserInfo() {
-    // Optional: Fetch self profile
-}
-
 function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     state.socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     state.socket.onopen = () => { console.log("Connected to WebSocket"); };
     state.socket.onmessage = (event) => { handleWsMessage(JSON.parse(event.data)); };
-    state.socket.onclose = () => { console.log("Disconnected from WebSocket"); };
+    state.socket.onclose = () => { 
+        console.log("Disconnected from WebSocket"); 
+        if (state.isLoggedIn) {
+            console.log("Attempting to reconnect in 3s...");
+            setTimeout(initWebSocket, 3000);
+        }
+    };
 }
 
 function handleWsMessage(msg) {
@@ -158,7 +178,10 @@ function handleReactionUpdate(msg) {
 
 function updateUserStatus(userId, online) {
     const el = document.getElementById(`user-status-${userId}`);
-    if (el) { el.style.color = online ? '#00ff00' : '#888'; el.innerText = online ? '●' : '○'; }
+    if (el) { 
+        el.style.color = online ? '#00ff00' : '#888'; 
+        el.innerHTML = online ? '● Online' : '○ Offline'; 
+    }
 }
 
 function markUserUnread(userId) {
@@ -184,19 +207,41 @@ async function renderChat(targetUserId, nickname) {
     state.activeChatUser = targetUserId;
     state.chatOffset = 0;
 
-    const el = document.getElementById(`user-name-${targetUserId}`);
-    if (el) { el.style.fontWeight = 'normal'; el.style.color = 'inherit'; }
+    // Reset all user names to normal weight
+    document.querySelectorAll('[id^="user-name-"]').forEach(el => {
+        el.style.fontWeight = 'normal';
+        el.style.color = 'inherit';
+    });
+    
+    // Highlight active user
+    const activeEl = document.getElementById(`user-name-${targetUserId}`);
+    if (activeEl) { 
+        activeEl.style.fontWeight = 'bold'; 
+        activeEl.style.color = '#bb86fc'; 
+    }
 
     const chatContainer = document.getElementById('chat-view');
     if (!chatContainer) return;
 
+    const isSelfChat = state.user && targetUserId === state.user.id;
+
+    // Build chat header: show special label when chatting with yourself
+    const headerTitle = isSelfChat
+        ? `💬 Chat with <span style="color:#bb86fc">${escapeHTML(nickname)} (Me)</span>`
+        : `💬 Chat with <span style="color:#bb86fc">${escapeHTML(nickname)}</span>`;
+
+    const selfBanner = isSelfChat
+        ? `<div style="background:rgba(187,134,252,0.1);border-left:3px solid #bb86fc;padding:0.5rem 1rem;font-size:0.8rem;color:#bb86fc;">📝 Note: You are chatting with yourself</div>`
+        : '';
+
     chatContainer.innerHTML = `
         <div class="card" style="height: 100%; display: flex; flex-direction: column; padding: 0;">
-            <div style="padding: 1rem; border-bottom: 1px solid #444; font-weight: bold; background: #2d2d2d;">
-                Chat with ${nickname}
-                <button onclick="closeChat()" style="float: right; background: none; border: none; color: #888; cursor: pointer;">X</button>
+            <div style="padding: 1rem; border-bottom: 1px solid #444; font-weight: bold; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center;">
+                <span>${headerTitle}</span>
+                <button onclick="closeChat()" class="btn-link" style="color: #ff5555; padding: 0;">Close</button>
             </div>
-            <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column-reverse;">
+            ${selfBanner}
+            <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column-reverse; background: #1e1e1e;">
                 <!-- Messages go here -->
             </div>
             <div id="typing-indicator" class="typing-indicator">
@@ -211,9 +256,11 @@ async function renderChat(targetUserId, nickname) {
         </div>
     `;
 
-    // Set up typing detection on the chat input
+    // Set up typing detection (skip if self-chat)
     const chatInput = document.getElementById('chat-input');
-    setupTypingDetection(chatInput, targetUserId);
+    if (!isSelfChat) {
+        setupTypingDetection(chatInput, targetUserId);
+    }
 
     document.getElementById('chat-form').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -222,7 +269,7 @@ async function renderChat(targetUserId, nickname) {
         if (!text) return;
 
         // Stop typing indicator immediately on send
-        if (isCurrentlyTyping) {
+        if (isCurrentlyTyping && !isSelfChat) {
             isCurrentlyTyping = false;
             clearTimeout(typingDebounceTimer);
             sendTypingEvent(targetUserId, false);
@@ -282,19 +329,17 @@ function formatMessage(msg) {
     const bg = isThem ? '#444' : '#bb86fc';
     const color = isThem ? '#e0e0e0' : '#000';
 
-    let nickname = "User " + msg.sender_id;
-    if (isThem) {
+    let nickname = isThem ? escapeHTML(msg.sender_nickname || "User") : "You";
+    if (isThem && state.users) {
         const u = state.users.find(u => u.id === msg.sender_id);
-        if (u) nickname = u.nickname;
-    } else {
-        nickname = "Me";
+        if (u) nickname = escapeHTML(u.nickname);
     }
 
     return `
         <div style="display: flex; justify-content: ${align}; margin-bottom: 0.5rem; width: 100%;">
             <div style="background: ${bg}; color: ${color}; padding: 0.5rem 1rem; border-radius: 4px; max-width: 70%; word-break: break-word;">
                 <div style="font-size: 0.7rem; font-weight: bold; margin-bottom: 0.2rem; opacity: 0.8;">${nickname}</div>
-                ${msg.content}
+                ${escapeHTML(msg.content)}
                 <div style="font-size: 0.6rem; opacity: 0.7; text-align: right; margin-top: 0.2rem;">
                     ${new Date(msg.created_at || msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
@@ -302,7 +347,6 @@ function formatMessage(msg) {
         </div>
     `;
 }
-function formatMessageContent(msg) { return formatMessage(msg); }
 
 function closeChat() {
     // Stop any active typing indicator when closing chat
@@ -333,7 +377,7 @@ async function renderHome() {
                     <!-- Users Section -->
                     <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
                         <h3 style="margin-bottom: 1rem; color: #bb86fc;">Online Users</h3>
-                        <div id="user-list">Loading...</div>
+                        <div id="user-list">Loading users...</div>
                     </div>
                 </div>
 
@@ -408,12 +452,25 @@ async function loadUsers() {
         state.users = users;
 
         const list = document.getElementById('user-list');
-        list.innerHTML = users.map(u => `
-            <div onclick="renderChat(${u.id}, '${u.nickname}')" style="cursor: pointer; padding: 0.5rem; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
-                <span id="user-name-${u.id}">${u.nickname}</span>
-                <span id="user-status-${u.id}" style="color: #888;">○</span>
+        
+        list.innerHTML = users.map(u => {
+            const isSelf = state.user && u.id === state.user.id;
+            const safeNickname = escapeHTML(u.nickname);
+            const label = isSelf ? `${safeNickname} <span style="font-size:0.75rem; color:#bb86fc; font-weight:normal;">(Me)</span>` : safeNickname;
+            const safeQuoteNickname = u.nickname.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+            
+            // Check if there are unread messages or this is the active user
+            const isActive = state.activeChatUser === u.id;
+            const style = isActive ? 'font-weight: bold; color: #bb86fc;' : 'color: inherit;';
+            const badge = `<span id="user-status-${u.id}" style="color:#888; font-size:12px;">○ Offline</span>`;
+            
+            return `
+            <div onclick="renderChat(${u.id}, '${safeQuoteNickname}')" style="cursor: pointer; padding: 0.8rem 0.5rem; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                <span id="user-name-${u.id}" style="${style}">${label}</span>
+                ${badge}
             </div>
-        `).join('');
+        `;
+        }).join('');
     } catch (e) {
         console.error(e);
     }
@@ -454,8 +511,8 @@ function renderFeed() {
                 <span>${post.nickname}</span>
                 <span>${new Date(post.created_at).toLocaleString()}</span>
             </div>
-            <h3 style="margin: 0.5rem 0; color: #bb86fc;">${post.title} <span style="font-size: 0.8em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; margin-left: 10px;">${post.category}</span></h3>
-            <p>${post.content}</p>
+            <h3 style="margin: 0.5rem 0; color: #bb86fc;">${escapeHTML(post.title)} <span style="font-size: 0.8em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; margin-left: 10px;">${escapeHTML(post.category)}</span></h3>
+            <p>${escapeHTML(post.content)}</p>
             <div class="reaction-buttons" data-post-id="${post.id}" style="margin-top: 10px; display: flex; gap: 10px;">
                 <button class="like-btn" data-action="like">
                     👍 <span class="like-count">${post.likes || 0}</span>
@@ -468,40 +525,7 @@ function renderFeed() {
         </div>
     `).join('');
 }
-function renderFeed() {
-    const container = document.getElementById('posts-container');
-    if (!container) return;
-
-    let displayPosts = state.allPosts;
-    if (state.activeCategory !== 'All') {
-        displayPosts = state.allPosts.filter(p => p.category === state.activeCategory);
-    }
-
-    if (displayPosts.length === 0) {
-        container.innerHTML = `<p style="text-align: center; color: #888;">No posts found for ${state.activeCategory}.</p>`;
-        return;
-    }
-
-    container.innerHTML = displayPosts.map(post => `
-        <div class="post">
-            <div class="post-header">
-                <span>${post.nickname}</span>
-                <span>${new Date(post.created_at).toLocaleString()}</span>
-            </div>
-            <h3 style="margin: 0.5rem 0; color: #bb86fc;">${post.title} <span style="font-size: 0.8em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; margin-left: 10px;">${post.category}</span></h3>
-            <p>${post.content}</p>
-            <div class="reaction-buttons" data-post-id="${post.id}" style="margin-top: 10px; display: flex; gap: 10px;">
-                <button class="like-btn" data-action="like">
-                    👍 <span class="like-count">${post.likes || 0}</span>
-                </button>
-                <button class="dislike-btn" data-action="dislike">
-                    👎 <span class="dislike-count">${post.dislikes || 0}</span>
-                </button>
-                <button class="btn-link view-comments-btn" data-post='${JSON.stringify(post).replace(/'/g, "&#39;")}' style="text-align: left; margin: 0; padding: 0; width: auto; margin-left: auto;">View Comments</button>
-            </div>
-        </div>
-    `).join('');
-}
+// (duplicate renderFeed removed — only one definition above is used)
 
 document.addEventListener('click', (e) => {
     if (e.target.classList.contains('view-comments-btn')) {
@@ -514,7 +538,6 @@ document.addEventListener('click', (e) => {
 // ... (renderPostDetail and other functions) ...
 
 // AFTER other window exposures
-window.setCategory = setCategory;
 async function renderPostDetail(post) {
     app.innerHTML = `
          <div class="container" style="display: block;">
@@ -524,8 +547,8 @@ async function renderPostDetail(post) {
                     <span>${post.nickname}</span>
                     <span>${new Date(post.created_at).toLocaleString()}</span>
                 </div>
-                <h2 style="margin: 0.5rem 0; border: none;">${post.title} <span style="font-size: 0.6em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; vertical-align: middle;">${post.category}</span></h2>
-                <p style="font-size: 1.1rem; line-height: 1.5;">${post.content}</p>
+                <h2 style="margin: 0.5rem 0; border: none;">${escapeHTML(post.title)} <span style="font-size: 0.6em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; vertical-align: middle;">${escapeHTML(post.category)}</span></h2>
+                <p style="font-size: 1.1rem; line-height: 1.5;">${escapeHTML(post.content)}</p>
                 <div class="reaction-buttons" data-post-id="${post.id}" style="margin-top: 10px; display: flex; gap: 10px;">
                     <button class="like-btn" data-action="like">
                         👍 <span class="like-count">${post.likes || 0}</span>
@@ -569,7 +592,7 @@ async function loadComments(postId) {
                 <div style="font-size: 0.8rem; color: #888; margin-bottom: 0.2rem;">
                     <span style="color: #bb86fc;">${c.nickname}</span> • ${new Date(c.created_at).toLocaleString()}
                 </div>
-                <p>${c.content}</p>
+                <p>${escapeHTML(c.content)}</p>
                  <div class="reaction-buttons" data-comment-id="${c.id}" style="margin-top: 5px; display: flex; gap: 10px;">
                     <button class="like-btn" data-action="like" style="font-size: 0.8rem; padding: 2px 6px;">
                         👍 <span class="like-count">${c.likes || 0}</span>
@@ -654,7 +677,7 @@ function renderRegister() {
 }
 
 // Handlers
-async function handleLogin(e) { e.preventDefault(); submitAuthForm(e, '/api/login', () => { state.isLoggedIn = true; logoutBtn.style.display = 'block'; initWebSocket(); renderHome(); }); }
+async function handleLogin(e) { e.preventDefault(); submitAuthForm(e, '/api/login', async () => { state.isLoggedIn = true; logoutBtn.style.display = 'block'; await fetchUserInfo(); initWebSocket(); renderHome(); }); }
 async function handleRegister(e) { e.preventDefault(); submitAuthForm(e, '/api/register', () => { alert('Success'); renderLogin(); }); }
 async function handleCreateComment(e, postId) { e.preventDefault(); /* ... */ const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('comment-error'); data.post_id = parseInt(data.post_id); try { const response = await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadComments(postId); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
 async function handleCreatePost(e) { e.preventDefault(); const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('home-error'); try { const response = await fetch('/api/posts/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadPosts(); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
@@ -685,7 +708,6 @@ window.renderLogin = renderLogin;
 window.renderRegister = renderRegister;
 window.renderHome = renderHome;
 window.renderPostDetail = renderPostDetail;
-window.renderChat = renderChat;
 window.renderChat = renderChat;
 window.closeChat = closeChat;
 window.setCategory = setCategory;

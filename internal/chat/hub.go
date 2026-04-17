@@ -66,6 +66,31 @@ func (h *Hub) Run() {
 			}
 			h.Mu.Unlock()
 
+		case client := <-h.Unregister:
+			h.Mu.Lock()
+			if _, ok := h.Clients[client]; ok {
+				delete(h.Clients, client)
+				close(client.Send)
+				
+				// Check if this was their last connection
+				stillActive := false
+				for c := range h.Clients {
+					if c.UserID == client.UserID {
+						stillActive = true
+						break
+					}
+				}
+				h.Mu.Unlock()
+
+				log.Printf("Client disconnected. UserID: %d", client.UserID)
+
+				if !stillActive {
+					h.broadcastUserStatus(client.UserID, false)
+				}
+			} else {
+				h.Mu.Unlock()
+			}
+
 		case message := <-h.Broadcast:
 			// 1. Распарсим сообщение, чтобы узнать SenderID и ReceiverID
 			var payload struct {

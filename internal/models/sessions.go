@@ -40,3 +40,9 @@ func (m *SessionModel) Delete(token string) error {
 	_, err := m.DB.Exec(stmt, token)
 	return err
 }
+
+func (m *SessionModel) DeleteByUserID(userID int) error {
+	stmt := `DELETE FROM sessions WHERE user_id = ?`
+	_, err := m.DB.Exec(stmt, userID)
+	return err
+}

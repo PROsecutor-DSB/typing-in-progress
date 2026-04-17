@@ -88,6 +88,9 @@ func (h *Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate old sessions
+	h.Sessions.DeleteByUserID(user.ID)
+
 	// Create session
 	token, _ := uuid.NewV4()
 	expiresAt := time.Now().Add(24 * time.Hour)
@@ -105,6 +108,34 @@ func (h *Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Login successful"))
+}
+
+// MeHandler returns the currently authenticated user's id and nickname.
+func (h *Handler) MeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	c, err := r.Cookie("session_token")
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	session, err := h.Sessions.GetByToken(c.Value)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	user, err := h.Users.GetByID(session.UserID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		ID       int    `json:"id"`
+		Nickname string `json:"nickname"`
+	}{ID: user.ID, Nickname: user.Nickname})
 }
 
 func (h *Handler) LogoutHandler(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"real-time-forum/internal/chat"
 	"real-time-forum/internal/models"
 	"strconv"
+	"time"
 )
 
 func (h *Handler) ServeWs(hub *chat.Hub, w http.ResponseWriter, r *http.Request) {
@@ -17,7 +18,7 @@ func (h *Handler) ServeWs(hub *chat.Hub, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil {
+	if err != nil || session.ExpiresAt.Before(time.Now()) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -64,7 +65,7 @@ func (h *Handler) GetChatHistoryHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil {
+	if err != nil || session.ExpiresAt.Before(time.Now()) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -87,12 +88,24 @@ func (h *Handler) GetChatHistoryHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(msgs)
 }
 
 func (h *Handler) GetUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	c, err := r.Cookie("session_token")
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	session, err := h.Sessions.GetByToken(c.Value)
+	if err != nil || session.ExpiresAt.Before(time.Now()) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -120,5 +133,6 @@ func (h *Handler) GetUsersHandler(w http.ResponseWriter, r *http.Request) {
 		}{u.ID, u.Nickname})
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(users)
 }

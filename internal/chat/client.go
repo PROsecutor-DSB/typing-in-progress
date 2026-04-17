@@ -14,7 +14,7 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 512
+	maxMessageSize = 4096
 )
 
 var Upgrader = websocket.Upgrader{
@@ -154,12 +154,6 @@ func (c *Client) WritePump() {
 				return
 			}
 			w.Write(message)
-
-			// Add queued chat messages to the current websocket message.
-			n := len(c.Send)
-			for i := 0; i < n; i++ {
-				w.Write(<-c.Send)
-			}
 
 			if err := w.Close(); err != nil {
 				return
