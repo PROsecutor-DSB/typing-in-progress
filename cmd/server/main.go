@@ -1,19 +1,38 @@
 package main
 
 import (
-	"io/fs"
+	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
 	"real-time-forum/internal/chat"
 	"real-time-forum/internal/database"
 	"real-time-forum/internal/handlers"
 	"real-time-forum/internal/models"
-	"strings"
+)
+
+const (
+	serverPort   = "8080"
+	databasePath = "database.db"
+	frontendDir  = "./frontend"
+
+	// The websocket pumps set their own deadlines once the connection is
+	// hijacked, so these limits only apply to ordinary HTTP requests.
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+	shutdownTimeout   = 10 * time.Second
 )
 
 func main() {
 	// Initialize SQLite database
-	db, err := database.InitDatabase()
+	db, err := database.InitDatabase(databasePath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -33,13 +52,51 @@ func main() {
 	hub := chat.NewHub()
 	go hub.Run()
 
-	// Initialize handlers (Inject Hub and Reactions)
 	h := handlers.NewHandler(users, sessions, posts, comments, reactions, messages, hub)
 
-	// Serve static files from frontend directory, without directory listings
-	http.Handle("/", http.FileServer(noListingFS{http.Dir("./frontend")}))
+	srv := &http.Server{
+		Addr:              ":" + serverPort,
+		Handler:           newRouter(h, hub),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 
-	// API routes
+	// Stop on Ctrl-C or SIGTERM instead of dropping connections
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("Server starting on port %s...", serverPort)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Server failed to start: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutting down...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	// Websocket connections are hijacked and therefore invisible to Shutdown
+	hub.CloseAll()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Graceful shutdown failed: %v", err)
+	}
+
+	log.Println("Server stopped")
+}
+
+// newRouter wires every route of the application.
+func newRouter(h *handlers.Handler, hub *chat.Hub) http.Handler {
+	mux := http.NewServeMux()
+
+	// Frontend, with a fallback so client side routes survive a page reload
+	mux.Handle("/", handlers.SPAHandler(frontendDir))
+
 	// Every authenticated endpoint goes through h.RequireAuth, which is the
 	// single place where the session cookie and its expiry are checked.
 	getPosts := h.RequireAuth(h.GetPostsHandler)
@@ -49,13 +106,13 @@ func main() {
 	toggleReaction := h.RequireAuth(h.ToggleReactionHandler)
 
 	// Auth
-	http.HandleFunc("/api/register", h.RegisterHandler)
-	http.HandleFunc("/api/login", h.LoginHandler)
-	http.HandleFunc("/api/logout", h.RequireAuth(h.LogoutHandler))
-	http.HandleFunc("/api/me", h.RequireAuth(h.MeHandler))
+	mux.HandleFunc("/api/register", h.RegisterHandler)
+	mux.HandleFunc("/api/login", h.LoginHandler)
+	mux.HandleFunc("/api/logout", h.RequireAuth(h.LogoutHandler))
+	mux.HandleFunc("/api/me", h.RequireAuth(h.MeHandler))
 
 	// Posts, and reactions addressed as /api/posts/{id}/{action}
-	http.HandleFunc("/api/posts/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/posts/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimPrefix(r.URL.Path, "/api/posts/") != "" {
 			if r.Method != http.MethodPost {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -75,7 +132,7 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("/api/comments/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/comments/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -84,7 +141,7 @@ func main() {
 	})
 
 	// Comments
-	http.HandleFunc("/api/comments", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/comments", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			getComments(w, r)
@@ -96,52 +153,14 @@ func main() {
 	})
 
 	// Reactions
-	http.HandleFunc("/api/reactions", toggleReaction)
+	mux.HandleFunc("/api/reactions", toggleReaction)
 
 	// Chat / WebSocket
-	http.HandleFunc("/ws", h.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ws", h.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeWs(hub, w, r)
 	}))
-	http.HandleFunc("/api/messages", h.RequireAuth(h.GetChatHistoryHandler))
-	http.HandleFunc("/api/users", h.RequireAuth(h.GetUsersHandler))
+	mux.HandleFunc("/api/messages", h.RequireAuth(h.GetChatHistoryHandler))
+	mux.HandleFunc("/api/users", h.RequireAuth(h.GetUsersHandler))
 
-	log.Println("Routes configured")
-
-	// Start HTTP server
-	port := "8080"
-	log.Printf("Server starting on port %s...", port)
-	err = http.ListenAndServe(":"+port, nil)
-	if err != nil {
-		log.Fatalf("Server failed to start: %v", err)
-	}
-}
-
-// noListingFS serves files but hides directories that have no index.html, so
-// that /static/ cannot be browsed.
-type noListingFS struct {
-	fs http.FileSystem
-}
-
-func (n noListingFS) Open(name string) (http.File, error) {
-	file, err := n.fs.Open(name)
-	if err != nil {
-		return nil, err
-	}
-
-	info, err := file.Stat()
-	if err != nil {
-		file.Close()
-		return nil, err
-	}
-
-	if info.IsDir() {
-		index, err := n.fs.Open(strings.TrimSuffix(name, "/") + "/index.html")
-		if err != nil {
-			file.Close()
-			return nil, fs.ErrNotExist
-		}
-		index.Close()
-	}
-
-	return file, nil
+	return mux
 }

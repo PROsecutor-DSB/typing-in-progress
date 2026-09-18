@@ -33,6 +33,7 @@ Follow these simple steps to run the forum on your local machine.
 Make sure you have installed on your system:
 * **Go** (version 1.21 or higher)
 * **C compiler (GCC/Clang)** (required for setting up the SQLite database)
+* **Node.js** (only to run the frontend tests)
 
 ### Installation & Running
 
@@ -57,13 +58,47 @@ Make sure you have installed on your system:
 
 ---
 
+## 🧪 Tests
+
+```bash
+go test ./...                      # backend: models, handlers, chat hub, routing
+node tests/frontend/app.test.mjs   # frontend: rendering, routing, session handling
+```
+
+The frontend tests run the real ES modules against a small DOM stub, so no
+browser or build step is needed.
+
 ## 🏗️ Project Structure
 
-Here is a quick overview of how the code is organized:
+```
+cmd/server/main.go          entry point: routes, timeouts, graceful shutdown
+internal/
+  chat/                     websocket hub and per-connection pumps
+  database/                 SQLite schema and connection settings
+  handlers/                 HTTP handlers, auth middleware, SPA file serving
+  models/                   data access layer
+frontend/
+  index.html                the single page of the application
+  static/css/style.css      styling, including the typing animation
+  static/js/
+    app.js                  bootstrap: routes, socket dispatch, session flow
+    router.js               History API routing
+    state.js  api.js  ws.js  utils.js
+    views/                  auth, feed, post, chat and reaction views
+tests/frontend/             frontend test suite and its DOM stub
+```
 
-* `cmd/server/main.go` - The entry point that starts the server.
-* `internal/` - Core backend logic (database, web handlers, and real-time chat server).
-* `frontend/` - Contains our frontend UI inside `index.html` and static files (JavaScript, CSS).
+## 🧭 Routing
+
+The application is a single page, but every view has its own URL, so a reload
+or a shared link lands where you expect:
+
+| URL | View |
+|---|---|
+| `/` | post feed |
+| `/posts/{id}` | one post with its comments |
+| `/?chat={userId}` | the feed with a conversation open |
+| `/login`, `/register` | authentication |
 
 ---
 

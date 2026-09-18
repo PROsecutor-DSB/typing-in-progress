@@ -5,27 +5,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Real-Time Forum</title>
-    <link rel="stylesheet" href="static/css/style.css">
-    <!-- Disable CSP -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; 
-               script-src 'self' 'unsafe-inline'; 
-               style-src 'self' 'unsafe-inline';">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- No inline scripts or styles are used, so both can stay locked down -->
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; base-uri 'none'; form-action 'self'">
 </head>
 
 <body>
     <header>
-        <div class="logo">REAL TIME FORUM Typing In Progress...</div>
-        <button id="logout-btn">Logout</button>
+        <a class="logo" href="/" data-link>REAL TIME FORUM <span class="logo-sub">Typing In Progress...</span></a>
+        <button type="button" id="logout-btn" class="hidden">Logout</button>
     </header>
 
     <div class="container">
         <div id="app">
-            <!-- Content rendered by app.js -->
-            <p style="text-align: center;">Loading...</p>
+            <p class="empty-state">Loading...</p>
         </div>
     </div>
 
-    <script src="static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js"></script>
 </body>
 
 </html>

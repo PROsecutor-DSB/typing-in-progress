@@ -174,3 +174,14 @@ func statusMessage(userID int, online bool) []byte {
 func (h *Hub) broadcastUserStatus(userID int, online bool) {
 	h.deliver(statusMessage(userID, online), func(*Client) bool { return true })
 }
+
+// CloseAll disconnects every client. Websocket connections are hijacked, so
+// http.Server.Shutdown cannot close them on its own.
+func (h *Hub) CloseAll() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	for client := range h.Clients {
+		h.removeLocked(client)
+	}
+}

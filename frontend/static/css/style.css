@@ -1,9 +1,21 @@
+/* ============================================================
+   Design tokens
+   ============================================================ */
 :root {
     --bg-color: #1a1a1a;
+    --bg-sunken: #1e1e1e;
+    --bg-input: #000;
     --text-color: #e0e0e0;
+    --text-muted: #888;
+    --text-faint: #666;
     --card-bg: #2d2d2d;
+    --border-soft: #444;
+    --border-faint: #333;
     --primary: #bb86fc;
+    --primary-soft: rgba(187, 134, 252, 0.1);
+    --online: #00ff00;
     --error: #cf6679;
+    --danger: #ff5555;
     --spacing: 1rem;
 }
 
@@ -23,12 +35,32 @@ body {
     flex-direction: column;
 }
 
+.hidden {
+    display: none !important;
+}
+
+/* Visually hidden, still announced by screen readers */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ============================================================
+   Shell
+   ============================================================ */
 header {
     padding: var(--spacing);
     border-bottom: 2px solid var(--text-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.75rem;
     background: var(--bg-color);
     flex-shrink: 0;
 }
@@ -36,6 +68,12 @@ header {
 .logo {
     font-size: 1.5rem;
     font-weight: bold;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.logo-sub {
+    color: var(--primary);
 }
 
 #logout-btn {
@@ -44,15 +82,18 @@ header {
     color: var(--error);
     padding: 0.5rem 1rem;
     cursor: pointer;
-    display: none;
+    flex-shrink: 0;
+}
+
+#logout-btn:hover {
+    background: var(--error);
+    color: var(--bg-color);
 }
 
 .container {
     flex: 1;
     display: flex;
-    /* Changed to flex */
     flex-direction: column;
-    /* Ensure vertical stacking */
     padding: var(--spacing);
     height: calc(100vh - 80px);
     overflow: hidden;
@@ -66,18 +107,18 @@ header {
     width: 100%;
 }
 
-/* Dashboard Grid */
+/* ============================================================
+   Dashboard layout
+   ============================================================ */
 .dashboard-grid {
     display: grid;
     grid-template-columns: 280px 1fr 350px;
     grid-template-rows: 1fr;
-    /* Force row to respect container height */
     gap: 1.5rem;
     height: 100%;
     width: 100%;
 }
 
-/* Base Card Style */
 .card {
     background: var(--card-bg);
     padding: 1.5rem;
@@ -85,36 +126,34 @@ header {
     box-shadow: 4px 4px 0px var(--text-color);
 }
 
-/* Left Column: Users */
 .col-users {
     height: 100%;
-    overflow-y: auto;
     min-height: 0;
-    /* Required for grid scrolling */
+    overflow: hidden;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
-/* Middle Column: Feed */
 .col-feed {
     height: 100%;
+    min-height: 0;
     overflow-y: auto;
     padding-right: 0.5rem;
-    /* for scrollbar spacing */
-    min-height: 0;
-    /* Required for grid scrolling */
     display: flex;
-    /* Use flex column to stack chat and posts properly */
     flex-direction: column;
 }
 
-/* Right Column: Create Post */
 .col-create {
     align-self: start;
-    /* Don't stretch */
     position: sticky;
     top: 0;
 }
 
-/* Components */
+/* ============================================================
+   Typography and forms
+   ============================================================ */
 h2 {
     margin-bottom: 1.5rem;
     text-transform: uppercase;
@@ -142,7 +181,7 @@ h3 {
 .input-group select {
     width: 100%;
     padding: 0.8rem;
-    background: #000;
+    background: var(--bg-input);
     border: 1px solid var(--text-color);
     color: var(--text-color);
 }
@@ -170,6 +209,16 @@ h3 {
     background: var(--primary);
 }
 
+.btn--inline {
+    width: auto;
+    margin: 0;
+    padding: 0.8rem 1.5rem;
+}
+
+.btn--compact {
+    padding: 0.5rem;
+}
+
 .btn-link {
     background: none;
     border: none;
@@ -180,6 +229,12 @@ h3 {
     display: block;
     width: 100%;
     text-align: center;
+    font-size: 1rem;
+}
+
+.btn-back {
+    text-align: left;
+    margin: 0 0 1rem;
 }
 
 .error-msg {
@@ -192,45 +247,65 @@ h3 {
     font-size: 0.9rem;
 }
 
-/* Post List */
-.post {
-    border: 1px solid var(--text-color);
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    background: var(--card-bg);
+.error-msg.visible {
+    display: block;
 }
 
-.post-header {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-    font-size: 0.8rem;
-    color: #888;
-    border-bottom: 1px dashed #444;
-    padding-bottom: 0.5rem;
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
 }
 
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-    width: 8px;
+.empty-state--muted {
+    color: var(--text-faint);
+    font-style: italic;
+    text-align: left;
 }
 
-::-webkit-scrollbar-track {
-    background: #1a1a1a;
+/* ============================================================
+   Auth screens
+   ============================================================ */
+.auth-box {
+    max-width: 420px;
+    margin: 2rem auto;
 }
 
-::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 4px;
+.auth-switch {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    text-align: center;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: #888;
+.auth-switch .btn-link {
+    display: inline;
+    width: auto;
+    margin: 0;
 }
 
-/* Sidebar & Category Styles */
+/* ============================================================
+   Sidebar: categories and contacts
+   ============================================================ */
 .sidebar-section {
     padding-right: 0.5rem;
+    min-height: 0;
+}
+
+.sidebar-section--categories {
+    flex: 0 0 auto;
+    max-height: 50%;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--border-soft);
+    padding-bottom: 1rem;
+}
+
+.sidebar-section--users {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.sidebar-title {
+    margin-bottom: 1rem;
+    color: var(--primary);
 }
 
 .category-btn {
@@ -244,26 +319,331 @@ h3 {
 }
 
 .category-btn:hover {
-    background: #2d2d2d;
+    background: var(--card-bg);
     color: #fff;
     padding-left: 1.2rem;
-    /* Slide effect */
 }
 
 .category-btn.active {
-    background: rgba(187, 134, 252, 0.1);
+    background: var(--primary-soft);
     border-left-color: var(--primary);
     color: var(--primary);
     font-weight: bold;
 }
 
-/* ============================================
-   TYPING INDICATOR
-   ============================================ */
+.user-item {
+    cursor: pointer;
+    padding: 0.8rem 0.5rem;
+    border-bottom: 1px solid var(--border-faint);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background 0.2s ease;
+}
+
+.user-item:hover {
+    background: #2a2a2a;
+}
+
+.user-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.user-name--active {
+    font-weight: bold;
+    color: var(--primary);
+}
+
+.user-status {
+    color: var(--text-muted);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.user-status--online {
+    color: var(--online);
+}
+
+/* ============================================================
+   Chat
+   ============================================================ */
+.chat-view {
+    margin-bottom: 2rem;
+    min-height: 300px;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.chat-placeholder {
+    height: 100%;
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+}
+
+.chat-panel {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    border: none;
+    box-shadow: none;
+}
+
+.chat-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-soft);
+    font-weight: bold;
+    background: var(--card-bg);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.chat-partner {
+    color: var(--primary);
+}
+
+.chat-close {
+    color: var(--danger);
+    padding: 0;
+    margin: 0;
+    width: auto;
+}
+
+.chat-messages {
+    flex: 1;
+    min-height: 220px;
+    max-height: 45vh;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column-reverse;
+    background: var(--bg-sunken);
+}
+
+.chat-form {
+    padding: 1rem;
+    border-top: 1px solid var(--border-soft);
+    background: #222;
+}
+
+.chat-input-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.chat-input {
+    flex: 1;
+    padding: 0.8rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-soft);
+    color: var(--text-color);
+}
+
+.chat-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.msg {
+    display: flex;
+    margin-bottom: 0.5rem;
+    width: 100%;
+}
+
+.msg--in {
+    justify-content: flex-start;
+}
+
+.msg--out {
+    justify-content: flex-end;
+}
+
+.msg-bubble {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    max-width: 70%;
+    word-break: break-word;
+}
+
+.msg--in .msg-bubble {
+    background: var(--border-soft);
+    color: var(--text-color);
+}
+
+.msg--out .msg-bubble {
+    background: var(--primary);
+    color: #000;
+}
+
+.msg-author {
+    font-size: 0.7rem;
+    font-weight: bold;
+    margin-bottom: 0.2rem;
+    opacity: 0.8;
+}
+
+.msg-time {
+    font-size: 0.6rem;
+    opacity: 0.7;
+    text-align: right;
+    margin-top: 0.2rem;
+}
+
+/* ============================================================
+   Posts and comments
+   ============================================================ */
+.post {
+    border: 1px solid var(--text-color);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    background: var(--card-bg);
+}
+
+.post-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    border-bottom: 1px dashed var(--border-soft);
+    padding-bottom: 0.5rem;
+}
+
+.post-title {
+    margin: 0.5rem 0;
+    color: var(--primary);
+}
+
+.post-category {
+    font-size: 0.8em;
+    color: var(--text-color);
+    border: 1px solid var(--text-faint);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+    white-space: nowrap;
+}
+
+.post-body {
+    white-space: pre-wrap;
+}
+
+.post-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.post-comments-link {
+    width: auto;
+    margin: 0 0 0 auto;
+    text-align: right;
+}
+
+.post-detail {
+    margin-bottom: 2rem;
+    border-color: var(--primary);
+}
+
+.post-detail-title {
+    margin: 0.5rem 0;
+    border: none;
+    text-transform: none;
+    padding: 0;
+}
+
+.post-detail-body {
+    font-size: 1.1rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.reaction-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.reaction-buttons button {
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    color: var(--text-color);
+    padding: 4px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.reaction-buttons button:hover {
+    border-color: var(--primary);
+}
+
+.reaction-buttons button.active {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.reaction-buttons--small button {
+    font-size: 0.8rem;
+    padding: 2px 6px;
+}
+
+.comments-list {
+    margin-bottom: 1rem;
+}
+
+.comment {
+    border-bottom: 1px solid var(--border-soft);
+    padding: 0.5rem 0;
+    margin-bottom: 0.5rem;
+}
+
+.comment-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+}
+
+.comment-author {
+    color: var(--primary);
+}
+
+/* ============================================================
+   Scrollbars
+   ============================================================ */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* ============================================================
+   Typing indicator
+   ============================================================ */
 .typing-indicator {
     padding: 0 1rem;
     font-size: 0.8rem;
-    color: #888;
+    color: var(--text-muted);
     overflow: hidden;
     max-height: 0;
     opacity: 0;
@@ -305,5 +685,97 @@ h3 {
     40% {
         opacity: 1;
         transform: translateY(-3px);
+    }
+}
+
+/* Respect a reduced motion preference: keep the hint, drop the movement */
+@media (prefers-reduced-motion: reduce) {
+    .typing-dots span {
+        animation: none;
+        opacity: 1;
+    }
+
+    .category-btn,
+    .user-item,
+    .typing-indicator {
+        transition: none;
+    }
+}
+
+/* ============================================================
+   Responsive layout
+   ============================================================ */
+@media (max-width: 1100px) {
+    .dashboard-grid {
+        grid-template-columns: 240px 1fr;
+        grid-template-rows: 1fr auto;
+    }
+
+    .col-create {
+        grid-column: 1 / -1;
+        position: static;
+    }
+}
+
+@media (max-width: 760px) {
+    body {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+
+    header {
+        flex-wrap: wrap;
+    }
+
+    .logo {
+        font-size: 1.1rem;
+    }
+
+    .logo-sub {
+        display: block;
+        font-size: 0.75rem;
+    }
+
+    .container {
+        height: auto;
+        overflow: visible;
+        padding: 0.75rem;
+    }
+
+    .dashboard-grid {
+        display: flex;
+        flex-direction: column;
+        height: auto;
+        gap: 1rem;
+    }
+
+    .col-users,
+    .col-feed {
+        height: auto;
+        overflow: visible;
+    }
+
+    .sidebar-section--categories,
+    .sidebar-section--users {
+        max-height: 40vh;
+        overflow-y: auto;
+    }
+
+    .card {
+        padding: 1rem;
+        box-shadow: 2px 2px 0px var(--text-color);
+    }
+
+    .chat-messages {
+        max-height: 55vh;
+    }
+
+    .msg-bubble {
+        max-width: 85%;
+    }
+
+    .auth-box {
+        margin: 1rem auto;
     }
 }

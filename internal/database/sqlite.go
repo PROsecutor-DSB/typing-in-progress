@@ -9,9 +9,7 @@ import (
 )
 
 // InitDatabase creates and initializes the SQLite database with schema
-func InitDatabase() (*sql.DB, error) {
-	const dbPath = "database.db"
-
+func InitDatabase(dbPath string) (*sql.DB, error) {
 	// Connection settings belong in the DSN: a PRAGMA executed through database/sql
 	// would only apply to the single pooled connection that happened to run it,
 	// which silently disables foreign keys on every other connection.
