@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"real-time-forum/internal/models"
+	"net/url"
+	"strings"
 	"time"
+
+	"real-time-forum/internal/models"
 
 	"github.com/gorilla/websocket"
 )
@@ -20,8 +23,21 @@ const (
 var Upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	// Allow all origins for simplicity in this project
-	CheckOrigin: func(r *http.Request) bool { return true },
+	// Only accept handshakes coming from this same site. Without this check any
+	// web page could open a socket with the visitor's cookie and read their
+	// private messages (cross-site websocket hijacking).
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // not a browser request
+		}
+
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return strings.EqualFold(u.Host, r.Host)
+	},
 }
 
 // Client is a middleman between the websocket connection and the hub.

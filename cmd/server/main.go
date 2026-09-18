@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"real-time-forum/internal/chat"
@@ -35,14 +36,15 @@ func main() {
 	// Initialize handlers (Inject Hub and Reactions)
 	h := handlers.NewHandler(users, sessions, posts, comments, reactions, messages, hub)
 
-	// Serve static files from frontend directory
-	fs := http.FileServer(http.Dir("./frontend"))
-	http.Handle("/", fs)
+	// Serve static files from frontend directory, without directory listings
+	http.Handle("/", http.FileServer(noListingFS{http.Dir("./frontend")}))
 
 	// API routes
 	// Every authenticated endpoint goes through h.RequireAuth, which is the
 	// single place where the session cookie and its expiry are checked.
+	getPosts := h.RequireAuth(h.GetPostsHandler)
 	createPost := h.RequireAuth(h.CreatePostHandler)
+	getComments := h.RequireAuth(h.GetCommentsHandler)
 	createComment := h.RequireAuth(h.CreateCommentHandler)
 	toggleReaction := h.RequireAuth(h.ToggleReactionHandler)
 
@@ -65,7 +67,7 @@ func main() {
 
 		switch r.Method {
 		case http.MethodGet:
-			h.GetPostsHandler(w, r)
+			getPosts(w, r)
 		case http.MethodPost:
 			createPost(w, r)
 		default:
@@ -85,7 +87,7 @@ func main() {
 	http.HandleFunc("/api/comments", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			h.GetCommentsHandler(w, r)
+			getComments(w, r)
 		case http.MethodPost:
 			createComment(w, r)
 		default:
@@ -112,4 +114,34 @@ func main() {
 	if err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
+}
+
+// noListingFS serves files but hides directories that have no index.html, so
+// that /static/ cannot be browsed.
+type noListingFS struct {
+	fs http.FileSystem
+}
+
+func (n noListingFS) Open(name string) (http.File, error) {
+	file, err := n.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	if info.IsDir() {
+		index, err := n.fs.Open(strings.TrimSuffix(name, "/") + "/index.html")
+		if err != nil {
+			file.Close()
+			return nil, fs.ErrNotExist
+		}
+		index.Close()
+	}
+
+	return file, nil
 }
