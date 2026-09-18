@@ -3,42 +3,60 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log"
-	"os"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // InitDatabase creates and initializes the SQLite database with schema
-func InitDatabase() (*sql.DB, error) {
-	dbPath := "database.db"
+func InitDatabase(dbPath string) (*sql.DB, error) {
+	// Connection settings belong in the DSN: a PRAGMA executed through database/sql
+	// would only apply to the single pooled connection that happened to run it,
+	// which silently disables foreign keys on every other connection.
+	dsn := fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", dbPath)
 
-	// Check if database file exists
-	_, err := os.Stat(dbPath)
-	dbExists := err == nil
-
-	// Open database connection
-	database, err := sql.Open("sqlite3", dbPath)
+	database, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Enable foreign keys
-	_, err = database.Exec("PRAGMA foreign_keys = ON")
-	if err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	// SQLite allows a single writer at a time; WAL plus a small pool keeps
+	// concurrent websocket writes from failing with "database is locked".
+	database.SetMaxOpenConns(8)
+	database.SetMaxIdleConns(8)
+	database.SetConnMaxLifetime(time.Hour)
+
+	if err := database.Ping(); err != nil {
+		database.Close()
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Create schema if database is new
-	if !dbExists {
-		err = createSchema(database)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create schema: %w", err)
-		}
-		log.Println("Database schema created")
+	// Every statement uses IF NOT EXISTS, so this is safe to run on every start
+	// and also repairs a database that was only partially created.
+	if err := createSchema(database); err != nil {
+		database.Close()
+		return nil, fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	if err := verifyForeignKeys(database); err != nil {
+		database.Close()
+		return nil, err
 	}
 
 	return database, nil
+}
+
+// verifyForeignKeys makes sure foreign key enforcement is really active on
+// pooled connections, so a broken DSN cannot go unnoticed.
+func verifyForeignKeys(db *sql.DB) error {
+	var enabled int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&enabled); err != nil {
+		return fmt.Errorf("failed to read foreign_keys pragma: %w", err)
+	}
+	if enabled != 1 {
+		return fmt.Errorf("foreign key enforcement is disabled")
+	}
+	return nil
 }
 
 // createSchema creates all required database tables

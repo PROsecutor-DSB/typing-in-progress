@@ -5,24 +5,11 @@ import (
 	"net/http"
 	"real-time-forum/internal/models"
 	"strconv"
-	"time"
 )
 
 func (h *Handler) CreateCommentHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Auth Guard
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil || session.ExpiresAt.Before(time.Now()) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -43,7 +30,7 @@ func (h *Handler) CreateCommentHandler(w http.ResponseWriter, r *http.Request) {
 
 	comment := &models.Comment{
 		PostID:  req.PostID,
-		UserID:  session.UserID,
+		UserID:  sessionFrom(r).UserID,
 		Content: req.Content,
 	}
 

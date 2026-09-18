@@ -7,8 +7,8 @@ import (
 )
 
 type Hub struct {
-	// ВАЖНО: Храним список ВСЕХ соединений, а не мапу по ID.
-	// Это позволяет одному юзеру сидеть с телефона и компа одновременно.
+	// Every connection is tracked separately, not keyed by user id, so one
+	// user can be connected from several devices at the same time.
 	Clients map[*Client]bool
 
 	Broadcast  chan []byte
@@ -32,126 +32,134 @@ func (h *Hub) Run() {
 		case client := <-h.Register:
 			h.Mu.Lock()
 			h.Clients[client] = true
+
+			// Collect who is already here, one entry per user even when that
+			// user has several connections open.
+			alreadyOnline := make(map[int]bool)
+			for existing := range h.Clients {
+				if existing.UserID != client.UserID {
+					alreadyOnline[existing.UserID] = true
+				}
+			}
 			h.Mu.Unlock()
 
 			log.Printf("Client connected. UserID: %d", client.UserID)
 
-			// 1. Сообщаем ВСЕМ ОСТАЛЬНЫМ, что этот клиент вошел (Боб пришел!)
+			// 1. Tell the newcomer who is already online
+			for userID := range alreadyOnline {
+				if !h.send(client, statusMessage(userID, true)) {
+					break // the newcomer is already gone
+				}
+			}
+
+			// 2. Tell everybody else that this user came online
 			h.broadcastUserStatus(client.UserID, true)
 
-			// 2. (НОВОЕ) Сообщаем ЭТОМУ КЛИЕНТУ про всех, кто УЖЕ здесь (Боб, тут сидит Алиса!)
+		case client := <-h.Unregister:
 			h.Mu.Lock()
-			for existingClient := range h.Clients {
-				// Проверяем всех, кроме себя самого
-				if existingClient.UserID != client.UserID {
-					msg := struct {
-						Type   string `json:"type"`
-						UserID int    `json:"user_id"`
-						Online bool   `json:"online"`
-					}{
-						Type:   "status",
-						UserID: existingClient.UserID,
-						Online: true,
-					}
-					data, _ := json.Marshal(msg)
+			removed := h.removeLocked(client)
 
-					// Отправляем новичку
-					select {
-					case client.Send <- data:
-					default:
-						close(client.Send)
-						delete(h.Clients, client)
-					}
+			// Check if this was their last connection
+			stillActive := false
+			for c := range h.Clients {
+				if c.UserID == client.UserID {
+					stillActive = true
+					break
 				}
 			}
 			h.Mu.Unlock()
 
-		case client := <-h.Unregister:
-			h.Mu.Lock()
-			if _, ok := h.Clients[client]; ok {
-				delete(h.Clients, client)
-				close(client.Send)
-				
-				// Check if this was their last connection
-				stillActive := false
-				for c := range h.Clients {
-					if c.UserID == client.UserID {
-						stillActive = true
-						break
-					}
-				}
-				h.Mu.Unlock()
+			if !removed {
+				continue // already dropped, nothing to announce
+			}
 
-				log.Printf("Client disconnected. UserID: %d", client.UserID)
+			log.Printf("Client disconnected. UserID: %d", client.UserID)
 
-				if !stillActive {
-					h.broadcastUserStatus(client.UserID, false)
-				}
-			} else {
-				h.Mu.Unlock()
+			if !stillActive {
+				h.broadcastUserStatus(client.UserID, false)
 			}
 
 		case message := <-h.Broadcast:
-			// 1. Распарсим сообщение, чтобы узнать SenderID и ReceiverID
 			var payload struct {
 				Type       string `json:"type"`
-				SenderID   int    `json:"sender_id"` // <--- ВАЖНО
+				SenderID   int    `json:"sender_id"`
 				ReceiverID int    `json:"receiver_id"`
 			}
 
-			// Если JSON битый, пропускаем
+			// Skip malformed messages
 			if err := json.Unmarshal(message, &payload); err != nil {
 				log.Printf("Hub JSON Error: %v", err)
 				continue
 			}
 
-			// 2. Route by message type
-			if payload.Type == "message" {
-				h.Mu.Lock()
-				for client := range h.Clients {
-					if client.UserID == payload.ReceiverID || client.UserID == payload.SenderID {
-						select {
-						case client.Send <- message:
-						default:
-							close(client.Send)
-							delete(h.Clients, client)
-						}
-					}
+			h.deliver(message, func(c *Client) bool {
+				switch payload.Type {
+				case "message":
+					// Private chat: only the two participants
+					return c.UserID == payload.ReceiverID || c.UserID == payload.SenderID
+				case "typing":
+					// Typing indicator: only the receiver, never back to the sender
+					return c.UserID == payload.ReceiverID
+				default:
+					// Everything else (reactions) is public
+					return true
 				}
-				h.Mu.Unlock()
-			} else if payload.Type == "typing" {
-				// Typing indicator — only send to the receiver, not back to sender
-				h.Mu.Lock()
-				for client := range h.Clients {
-					if client.UserID == payload.ReceiverID {
-						select {
-						case client.Send <- message:
-						default:
-							close(client.Send)
-							delete(h.Clients, client)
-						}
-					}
-				}
-				h.Mu.Unlock()
-			} else {
-				// All other types (e.g. post_reaction) — broadcast to everyone
-				h.Mu.Lock()
-				for client := range h.Clients {
-					select {
-					case client.Send <- message:
-					default:
-						close(client.Send)
-						delete(h.Clients, client)
-					}
-				}
-				h.Mu.Unlock()
-			}
+			})
 		}
 	}
 }
 
-func (h *Hub) broadcastUserStatus(userID int, online bool) {
-	msg := struct {
+// deliver sends a message to every connected client matching the predicate.
+func (h *Hub) deliver(message []byte, matches func(*Client) bool) {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	// Deleting from a map while ranging over it is safe in Go, and sendLocked
+	// is the only place that removes a client, so Send is never closed twice.
+	for client := range h.Clients {
+		if matches(client) {
+			h.sendLocked(client, message)
+		}
+	}
+}
+
+// send delivers one message to one client. It reports whether the client is
+// still connected afterwards.
+func (h *Hub) send(client *Client, message []byte) bool {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	return h.sendLocked(client, message)
+}
+
+// sendLocked must be called with h.Mu held. A client whose buffer is full is
+// considered dead and is dropped.
+func (h *Hub) sendLocked(client *Client, message []byte) bool {
+	if !h.Clients[client] {
+		return false
+	}
+
+	select {
+	case client.Send <- message:
+		return true
+	default:
+		h.removeLocked(client)
+		return false
+	}
+}
+
+// removeLocked must be called with h.Mu held. It closes Send exactly once,
+// which is what keeps a slow client from panicking the whole hub.
+func (h *Hub) removeLocked(client *Client) bool {
+	if !h.Clients[client] {
+		return false
+	}
+	delete(h.Clients, client)
+	close(client.Send)
+	return true
+}
+
+func statusMessage(userID int, online bool) []byte {
+	data, _ := json.Marshal(struct {
 		Type   string `json:"type"`
 		UserID int    `json:"user_id"`
 		Online bool   `json:"online"`
@@ -159,20 +167,21 @@ func (h *Hub) broadcastUserStatus(userID int, online bool) {
 		Type:   "status",
 		UserID: userID,
 		Online: online,
-	}
+	})
+	return data
+}
 
-	data, _ := json.Marshal(msg)
+func (h *Hub) broadcastUserStatus(userID int, online bool) {
+	h.deliver(statusMessage(userID, online), func(*Client) bool { return true })
+}
 
+// CloseAll disconnects every client. Websocket connections are hijacked, so
+// http.Server.Shutdown cannot close them on its own.
+func (h *Hub) CloseAll() {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// Статус отправляем вообще всем подключенным
 	for client := range h.Clients {
-		select {
-		case client.Send <- data:
-		default:
-			close(client.Send)
-			delete(h.Clients, client)
-		}
+		h.removeLocked(client)
 	}
 }

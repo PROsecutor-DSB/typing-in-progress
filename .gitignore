@@ -1,5 +1,17 @@
+# Build artifacts
 server
-database.db
+forum
 *.o
 *.a
+*.exe
+
+# Database (including WAL side files)
+database.db
+database.db-wal
+database.db-shm
+
+# Local scratch files: cookie jars from manual curl testing
+cookies.txt
+*_cookie.txt
+
 .DS_Store

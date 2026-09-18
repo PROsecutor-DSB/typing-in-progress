@@ -11,17 +11,7 @@ func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Auth Guard
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
+	session := sessionFrom(r)
 
 	var req struct {
 		CommentID int    `json:"comment_id,omitempty"`
@@ -39,10 +29,13 @@ func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var likes, dislikes int
-	var actionResult string // "like", "dislike", or "" (removed)
-	var broadcastType string
-	var contentID int
+	var (
+		likes, dislikes int
+		actionResult    string // "like", "dislike", or "" (removed)
+		broadcastType   string
+		contentID       int
+		err             error
+	)
 
 	if req.CommentID > 0 {
 		// Comment Reaction
