@@ -2,15 +2,7 @@ package models
 
 import (
 	"database/sql"
-	"errors"
-	"strings"
 	"time"
-)
-
-// Errors returned by UserModel.Create when the nickname or e-mail is taken.
-var (
-	ErrDuplicateNickname = errors.New("models: nickname already taken")
-	ErrDuplicateEmail    = errors.New("models: email already registered")
 )
 
 type User struct {
@@ -40,15 +32,7 @@ func (m *UserModel) Create(u *User) error {
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := m.DB.Exec(stmt, u.Nickname, u.Age, u.Gender, u.FirstName, u.LastName, u.Email, u.Password, time.Now())
-	if err != nil {
-		switch {
-		case strings.Contains(err.Error(), "users.nickname"):
-			return ErrDuplicateNickname
-		case strings.Contains(err.Error(), "users.email"):
-			return ErrDuplicateEmail
-		}
-	}
-	return err
+	return classifyConstraintError(err)
 }
 
 func (m *UserModel) GetByEmail(email string) (*User, error) {

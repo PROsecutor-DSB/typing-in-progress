@@ -2,8 +2,22 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+
+	"real-time-forum/internal/models"
 )
+
+// writeReactionError separates a reaction on something that does not exist
+// from a real database failure.
+func writeReactionError(w http.ResponseWriter, err error, target string) {
+	if errors.Is(err, models.ErrRelatedRecordMissing) {
+		http.Error(w, fmt.Sprintf("This %s does not exist", target), http.StatusBadRequest)
+		return
+	}
+	http.Error(w, "Failed to toggle reaction", http.StatusInternalServerError)
+}
 
 func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -43,7 +57,7 @@ func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) 
 		broadcastType = "comment_reaction"
 		actionResult, err = h.Reactions.ToggleReaction(session.UserID, req.CommentID, req.Type)
 		if err != nil {
-			http.Error(w, "Failed to toggle reaction", http.StatusInternalServerError)
+			writeReactionError(w, err, "comment")
 			return
 		}
 		likes, dislikes, err = h.Reactions.GetReactionsCount(req.CommentID)
@@ -53,7 +67,7 @@ func (h *Handler) ToggleReactionHandler(w http.ResponseWriter, r *http.Request) 
 		broadcastType = "post_reaction"
 		actionResult, err = h.Reactions.TogglePostReaction(session.UserID, req.PostID, req.Type)
 		if err != nil {
-			http.Error(w, "Failed to toggle reaction", http.StatusInternalServerError)
+			writeReactionError(w, err, "post")
 			return
 		}
 		likes, dislikes, err = h.Reactions.GetPostReactionCounts(req.PostID)

@@ -173,3 +173,26 @@ func TestForeignKeysAreEnforcedConcurrently(t *testing.T) {
 		}
 	}
 }
+
+// A foreign key violation must be reported as a missing relation, so that the
+// handlers can answer 400 instead of 500.
+func TestMissingRelationIsClassified(t *testing.T) {
+	users, messages := newUsers(t)
+	alice := createUser(t, users, "alice", "alice@example.com")
+
+	err := messages.Save(&models.Message{SenderID: alice.ID, ReceiverID: 99999, Content: "ghost"})
+	if !errors.Is(err, models.ErrRelatedRecordMissing) {
+		t.Errorf("got %v, want ErrRelatedRecordMissing", err)
+	}
+
+	comments := &models.CommentModel{DB: users.DB}
+	err = comments.Create(&models.Comment{PostID: 99999, UserID: alice.ID, Content: "orphan"})
+	if !errors.Is(err, models.ErrRelatedRecordMissing) {
+		t.Errorf("got %v, want ErrRelatedRecordMissing", err)
+	}
+
+	reactions := &models.ReactionModel{DB: users.DB}
+	if _, err = reactions.TogglePostReaction(alice.ID, 99999, "like"); !errors.Is(err, models.ErrRelatedRecordMissing) {
+		t.Errorf("got %v, want ErrRelatedRecordMissing", err)
+	}
+}

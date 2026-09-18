@@ -23,7 +23,7 @@ type CommentModel struct {
 func (m *CommentModel) Create(c *Comment) error {
 	stmt := `INSERT INTO comments (post_id, user_id, content, created_at) VALUES (?, ?, ?, ?)`
 	_, err := m.DB.Exec(stmt, c.PostID, c.UserID, c.Content, time.Now())
-	return err
+	return classifyConstraintError(err)
 }
 
 func (m *CommentModel) GetByPostID(postID int) ([]*Comment, error) {

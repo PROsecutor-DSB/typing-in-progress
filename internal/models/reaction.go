@@ -28,7 +28,7 @@ func (m *ReactionModel) ToggleReaction(userID, commentID int, reactionType strin
 	if err == sql.ErrNoRows {
 		// Insert
 		_, err = m.DB.Exec("INSERT INTO comment_reactions (user_id, comment_id, type) VALUES (?, ?, ?)", userID, commentID, reactionType)
-		return reactionType, err
+		return reactionType, classifyConstraintError(err)
 	} else if err != nil {
 		return "", err
 	}
@@ -78,7 +78,7 @@ func (m *ReactionModel) TogglePostReaction(userID, postID int, reactionType stri
 
 	if err == sql.ErrNoRows {
 		_, err = m.DB.Exec("INSERT INTO post_reactions (user_id, post_id, type) VALUES (?, ?, ?)", userID, postID, reactionType)
-		return reactionType, err
+		return reactionType, classifyConstraintError(err)
 	} else if err != nil {
 		return "", err
 	}

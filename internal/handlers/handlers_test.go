@@ -280,3 +280,53 @@ func TestChatHistoryPageSize(t *testing.T) {
 		t.Errorf("history page = %d messages, want 10", len(page))
 	}
 }
+
+// Writing against a row that does not exist is the client's mistake, so it
+// must not be reported as an internal server error.
+func TestMissingRelationsAreClientErrors(t *testing.T) {
+	env := newEnv(t)
+	postJSON(t, env.handler.RegisterHandler, "/api/register", validRegistration, nil)
+	cookie := login(t, env, "alice", "secret123")
+
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		path    string
+		body    string
+	}{
+		{"comment on a missing post", env.handler.RequireAuth(env.handler.CreateCommentHandler), "/api/comments", `{"post_id":99999,"content":"orphan"}`},
+		{"reaction on a missing post", env.handler.RequireAuth(env.handler.ToggleReactionHandler), "/api/reactions", `{"post_id":99999,"type":"like"}`},
+		{"reaction on a missing comment", env.handler.RequireAuth(env.handler.ToggleReactionHandler), "/api/reactions", `{"comment_id":99999,"type":"like"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postJSON(t, tc.handler, tc.path, tc.body, cookie)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("got %d, want %d (%s)", rec.Code, http.StatusBadRequest, strings.TrimSpace(rec.Body.String()))
+			}
+			if !strings.Contains(rec.Body.String(), "does not exist") {
+				t.Errorf("the message does not explain the problem: %q", strings.TrimSpace(rec.Body.String()))
+			}
+		})
+	}
+}
+
+// A valid comment must still work after the error mapping above.
+func TestCreateCommentOnExistingPost(t *testing.T) {
+	env := newEnv(t)
+	postJSON(t, env.handler.RegisterHandler, "/api/register", validRegistration, nil)
+	cookie := login(t, env, "alice", "secret123")
+
+	rec := postJSON(t, env.handler.RequireAuth(env.handler.CreatePostHandler), "/api/posts/",
+		`{"title":"Title","content":"Body","category":"Tech"}`, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create post: got %d", rec.Code)
+	}
+
+	rec = postJSON(t, env.handler.RequireAuth(env.handler.CreateCommentHandler), "/api/comments",
+		`{"post_id":1,"content":"looks good"}`, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("create comment: got %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}

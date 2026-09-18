@@ -21,7 +21,7 @@ func (m *MessageModel) Save(msg *Message) error {
 	stmt := `INSERT INTO messages (sender_id, receiver_id, content, created_at) VALUES (?, ?, ?, ?)`
 	res, err := m.DB.Exec(stmt, msg.SenderID, msg.ReceiverID, msg.Content, time.Now())
 	if err != nil {
-		return err
+		return classifyConstraintError(err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {

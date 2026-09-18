@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"real-time-forum/internal/models"
 	"strconv"
@@ -35,6 +36,10 @@ func (h *Handler) CreateCommentHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Comments.Create(comment); err != nil {
+		if errors.Is(err, models.ErrRelatedRecordMissing) {
+			http.Error(w, "This post does not exist", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "Failed to create comment", http.StatusInternalServerError)
 		return
 	}
