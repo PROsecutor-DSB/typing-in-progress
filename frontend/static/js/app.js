@@ -10,16 +10,23 @@ function escapeHTML(str) {
 
 // State
 const state = {
-    isLoggedIn: document.cookie.includes('session_token'),
+    isLoggedIn: false, // Confirmed by /api/me, never guessed from the cookie
     user: null, // Current logged in user
-    users: [], // List of all users
+    users: [], // Chat contacts, ordered by last message
+    onlineUsers: new Set(), // Ids of users currently connected
+    unread: new Set(), // Ids of users with unread messages
     activeChatUser: null, // ID of user we are chatting with
     socket: null,
+    wsRetries: 0,
     chatOffset: 0,
     chatLoading: false,
+    chatHasMore: true,
     allPosts: [], // Store all posts locally
-    activeCategory: 'All' // Default category
+    activeCategory: 'All', // Default category
+    view: 'feed' // 'feed' or 'post' — what the middle column shows
 };
+
+const WS_MAX_RETRIES = 6;
 
 // Typing indicator state
 let typingDebounceTimer = null;
@@ -32,22 +39,57 @@ const logoutBtn = document.getElementById('logout-btn');
 
 const CATEGORIES = ["General", "Tech", "Random", "Blockchain", "Startups", "Economics", "Science", "Music", "Movies"];
 
+// Must match messagePageSize on the server
+const CHAT_PAGE_SIZE = 10;
+
+// apiFetch centralises the "session is gone" case: the cookie is HttpOnly, so
+// the server's 401 is the only reliable signal that we are logged out.
+async function apiFetch(url, options) {
+    const response = await fetch(url, options);
+    if (response.status === 401 && state.isLoggedIn) {
+        handleUnauthorized();
+    }
+    return response;
+}
+
+function handleUnauthorized() {
+    state.isLoggedIn = false;
+    state.user = null;
+    state.users = [];
+    state.onlineUsers.clear();
+    state.unread.clear();
+    state.activeChatUser = null;
+    logoutBtn.style.display = 'none';
+    if (state.socket) {
+        state.socket.onclose = null;
+        state.socket.close();
+        state.socket = null;
+    }
+    renderLogin('Your session has expired, please log in again.');
+}
+
+// fetchUserInfo doubles as the session check: it tells us both who we are and
+// whether we are still logged in.
 async function fetchUserInfo() {
     try {
         const res = await fetch('/api/me');
         if (res.ok) {
             state.user = await res.json(); // { id, nickname }
+            return true;
         }
     } catch (_) {}
+    state.user = null;
+    return false;
 }
 
 async function initApp() {
+    state.isLoggedIn = await fetchUserInfo();
     if (state.isLoggedIn) {
         logoutBtn.style.display = 'block';
-        await fetchUserInfo();   // know who we are BEFORE rendering users
         initWebSocket();
         renderHome();
     } else {
+        logoutBtn.style.display = 'none';
         renderLogin();
     }
 }
@@ -62,21 +104,42 @@ function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     state.socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
-    state.socket.onopen = () => { console.log("Connected to WebSocket"); };
+    state.socket.onopen = () => { state.wsRetries = 0; };
     state.socket.onmessage = (event) => { handleWsMessage(JSON.parse(event.data)); };
-    state.socket.onclose = () => { 
-        console.log("Disconnected from WebSocket"); 
-        if (state.isLoggedIn) {
-            console.log("Attempting to reconnect in 3s...");
-            setTimeout(initWebSocket, 3000);
-        }
+    state.socket.onclose = () => {
+        // Nobody is online as far as we know while the socket is down.
+        state.onlineUsers.clear();
+        refreshUserStatuses();
+        scheduleReconnect();
     };
+}
+
+// scheduleReconnect backs off exponentially and re-validates the session first,
+// so an expired login ends on the login screen instead of in a retry loop.
+function scheduleReconnect() {
+    if (!state.isLoggedIn || state.wsRetries >= WS_MAX_RETRIES) return;
+
+    const delay = Math.min(30000, 1000 * Math.pow(2, state.wsRetries));
+    state.wsRetries++;
+
+    setTimeout(async () => {
+        if (!state.isLoggedIn) return;
+        const stillLoggedIn = await fetchUserInfo();
+        if (!stillLoggedIn) {
+            handleUnauthorized();
+            return;
+        }
+        initWebSocket();
+    }, delay);
 }
 
 function handleWsMessage(msg) {
     if (msg.type === 'status') {
-        updateUserStatus(msg.user_id, msg.online);
+        setUserOnline(msg.user_id, msg.online);
     } else if (msg.type === 'message') {
+        // Keep the sidebar ordered like a chat app: newest conversation on top
+        const partnerId = msg.sender_id === state.user?.id ? msg.receiver_id : msg.sender_id;
+        moveContactToTop(partnerId);
         // When we receive a message from the user who was typing, hide their indicator
         if (msg.sender_id === state.activeChatUser) {
             hideTypingIndicator();
@@ -176,15 +239,39 @@ function handleReactionUpdate(msg) {
     }
 }
 
-function updateUserStatus(userId, online) {
-    const el = document.getElementById(`user-status-${userId}`);
-    if (el) { 
-        el.style.color = online ? '#00ff00' : '#888'; 
-        el.innerHTML = online ? '● Online' : '○ Offline'; 
+// Online state lives in state.onlineUsers, so it survives any re-render and
+// status events that arrive before the user list exists are not lost.
+function setUserOnline(userId, online) {
+    if (online) {
+        state.onlineUsers.add(userId);
+    } else {
+        state.onlineUsers.delete(userId);
     }
+    paintUserStatus(userId);
+}
+
+function paintUserStatus(userId) {
+    const el = document.getElementById(`user-status-${userId}`);
+    if (!el) return;
+    const online = state.onlineUsers.has(userId);
+    el.style.color = online ? '#00ff00' : '#888';
+    el.textContent = online ? '● Online' : '○ Offline';
+}
+
+function refreshUserStatuses() {
+    state.users.forEach(u => paintUserStatus(u.id));
+}
+
+function moveContactToTop(userId) {
+    const index = state.users.findIndex(u => u.id === userId);
+    if (index <= 0) return; // unknown contact or already first
+    const [contact] = state.users.splice(index, 1);
+    state.users.unshift(contact);
+    renderUserList();
 }
 
 function markUserUnread(userId) {
+    state.unread.add(userId);
     const el = document.getElementById(`user-name-${userId}`);
     if (el) { el.style.fontWeight = 'bold'; el.style.color = '#bb86fc'; }
 }
@@ -206,33 +293,16 @@ function throttle(func, limit) {
 async function renderChat(targetUserId, nickname) {
     state.activeChatUser = targetUserId;
     state.chatOffset = 0;
+    state.chatHasMore = true;
 
-    // Reset all user names to normal weight
-    document.querySelectorAll('[id^="user-name-"]').forEach(el => {
-        el.style.fontWeight = 'normal';
-        el.style.color = 'inherit';
-    });
-    
-    // Highlight active user
-    const activeEl = document.getElementById(`user-name-${targetUserId}`);
-    if (activeEl) { 
-        activeEl.style.fontWeight = 'bold'; 
-        activeEl.style.color = '#bb86fc'; 
-    }
+    // Opening a chat clears its unread marker; the sidebar renders from state
+    state.unread.delete(targetUserId);
+    renderUserList();
 
     const chatContainer = document.getElementById('chat-view');
     if (!chatContainer) return;
 
-    const isSelfChat = state.user && targetUserId === state.user.id;
-
-    // Build chat header: show special label when chatting with yourself
-    const headerTitle = isSelfChat
-        ? `💬 Chat with <span style="color:#bb86fc">${escapeHTML(nickname)} (Me)</span>`
-        : `💬 Chat with <span style="color:#bb86fc">${escapeHTML(nickname)}</span>`;
-
-    const selfBanner = isSelfChat
-        ? `<div style="background:rgba(187,134,252,0.1);border-left:3px solid #bb86fc;padding:0.5rem 1rem;font-size:0.8rem;color:#bb86fc;">📝 Note: You are chatting with yourself</div>`
-        : '';
+    const headerTitle = `💬 Chat with <span style="color:#bb86fc">${escapeHTML(nickname)}</span>`;
 
     chatContainer.innerHTML = `
         <div class="card" style="height: 100%; display: flex; flex-direction: column; padding: 0;">
@@ -240,7 +310,6 @@ async function renderChat(targetUserId, nickname) {
                 <span>${headerTitle}</span>
                 <button onclick="closeChat()" class="btn-link" style="color: #ff5555; padding: 0;">Close</button>
             </div>
-            ${selfBanner}
             <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column-reverse; background: #1e1e1e;">
                 <!-- Messages go here -->
             </div>
@@ -256,11 +325,7 @@ async function renderChat(targetUserId, nickname) {
         </div>
     `;
 
-    // Set up typing detection (skip if self-chat)
-    const chatInput = document.getElementById('chat-input');
-    if (!isSelfChat) {
-        setupTypingDetection(chatInput, targetUserId);
-    }
+    setupTypingDetection(document.getElementById('chat-input'), targetUserId);
 
     document.getElementById('chat-form').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -269,7 +334,7 @@ async function renderChat(targetUserId, nickname) {
         if (!text) return;
 
         // Stop typing indicator immediately on send
-        if (isCurrentlyTyping && !isSelfChat) {
+        if (isCurrentlyTyping) {
             isCurrentlyTyping = false;
             clearTimeout(typingDebounceTimer);
             sendTypingEvent(targetUserId, false);
@@ -289,7 +354,7 @@ async function renderChat(targetUserId, nickname) {
 async function handleScroll() {
     const list = document.getElementById('chat-messages');
     if (Math.abs(list.scrollTop) > (list.scrollHeight - list.clientHeight - 50)) {
-        if (!state.chatLoading) {
+        if (!state.chatLoading && state.chatHasMore) {
             loadChatHistory(state.activeChatUser);
         }
     }
@@ -301,14 +366,20 @@ async function loadChatHistory(targetUserId) {
 
     const list = document.getElementById('chat-messages');
     try {
-        const response = await fetch(`/api/messages?user_id=${targetUserId}&offset=${state.chatOffset}`);
-        const messages = await response.json();
+        const response = await apiFetch(`/api/messages?user_id=${targetUserId}&offset=${state.chatOffset}`);
+        if (!response.ok) return;
 
-        if (messages && messages.length > 0) {
-            state.chatOffset += messages.length;
+        const messages = await response.json();
+        const received = messages ? messages.length : 0;
+
+        if (received > 0) {
+            state.chatOffset += received;
             const html = messages.map(msg => formatMessage(msg)).join('');
             list.insertAdjacentHTML('beforeend', html);
         }
+
+        // A short page means the conversation is fully loaded
+        if (received < CHAT_PAGE_SIZE) state.chatHasMore = false;
     } catch (e) {
         console.error(e);
     } finally {
@@ -321,6 +392,16 @@ function appendMessage(msg) {
     if (list) {
         list.insertAdjacentHTML('afterbegin', formatMessage(msg));
     }
+}
+
+// Messages must show the date they were sent, not just the time.
+function formatMessageDate(value) {
+    const date = new Date(value);
+    if (isNaN(date)) return '';
+    return date.toLocaleString([], {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
 }
 
 function formatMessage(msg) {
@@ -341,7 +422,7 @@ function formatMessage(msg) {
                 <div style="font-size: 0.7rem; font-weight: bold; margin-bottom: 0.2rem; opacity: 0.8;">${nickname}</div>
                 ${escapeHTML(msg.content)}
                 <div style="font-size: 0.6rem; opacity: 0.7; text-align: right; margin-top: 0.2rem;">
-                    ${new Date(msg.created_at || msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    ${formatMessageDate(msg.created_at || msg.timestamp)}
                 </div>
             </div>
         </div>
@@ -357,10 +438,13 @@ function closeChat() {
     }
     hideTypingIndicator();
     state.activeChatUser = null;
+    renderUserList();
     document.getElementById('chat-view').innerHTML = '<div style="height:100%; display:flex; align-items:center; justify-content:center; color:#666;">Select a user to chat</div>';
 }
 
 async function renderHome() {
+    state.view = 'feed';
+
     // Check if the dashboard grid already exists
     if (!document.querySelector('.dashboard-grid')) {
         app.innerHTML = `
@@ -441,45 +525,60 @@ function renderCategoryMenu() {
 
 function setCategory(cat) {
     state.activeCategory = cat;
+    state.view = 'feed';
     renderCategoryMenu(); // Re-render to update active state
     renderFeed(); // Filter and render posts
 }
 
 async function loadUsers() {
     try {
-        const response = await fetch('/api/users');
-        const users = await response.json();
-        state.users = users;
-
-        const list = document.getElementById('user-list');
-        
-        list.innerHTML = users.map(u => {
-            const isSelf = state.user && u.id === state.user.id;
-            const safeNickname = escapeHTML(u.nickname);
-            const label = isSelf ? `${safeNickname} <span style="font-size:0.75rem; color:#bb86fc; font-weight:normal;">(Me)</span>` : safeNickname;
-            const safeQuoteNickname = u.nickname.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-            
-            // Check if there are unread messages or this is the active user
-            const isActive = state.activeChatUser === u.id;
-            const style = isActive ? 'font-weight: bold; color: #bb86fc;' : 'color: inherit;';
-            const badge = `<span id="user-status-${u.id}" style="color:#888; font-size:12px;">○ Offline</span>`;
-            
-            return `
-            <div onclick="renderChat(${u.id}, '${safeQuoteNickname}')" style="cursor: pointer; padding: 0.8rem 0.5rem; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
-                <span id="user-name-${u.id}" style="${style}">${label}</span>
-                ${badge}
-            </div>
-        `;
-        }).join('');
+        const response = await apiFetch('/api/users');
+        if (!response.ok) return;
+        // The server already orders contacts by last message, then alphabetically
+        state.users = await response.json() || [];
+        renderUserList();
     } catch (e) {
         console.error(e);
     }
 }
 
+function renderUserList() {
+    const list = document.getElementById('user-list');
+    if (!list) return;
+
+    if (state.users.length === 0) {
+        list.innerHTML = '<p style="color:#666; font-style: italic;">No other users yet.</p>';
+        return;
+    }
+
+    list.innerHTML = state.users.map(u => {
+        const highlighted = state.activeChatUser === u.id || state.unread.has(u.id);
+        const style = highlighted ? 'font-weight: bold; color: #bb86fc;' : 'color: inherit;';
+        const online = state.onlineUsers.has(u.id);
+        const badge = `<span id="user-status-${u.id}" style="color:${online ? '#00ff00' : '#888'}; font-size:12px;">${online ? '● Online' : '○ Offline'}</span>`;
+
+        return `
+            <div class="user-item" data-user-id="${u.id}" style="cursor: pointer; padding: 0.8rem 0.5rem; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='transparent'">
+                <span id="user-name-${u.id}" style="${style}">${escapeHTML(u.nickname)}</span>
+                ${badge}
+            </div>
+        `;
+    }).join('');
+}
+
+// Event delegation avoids building the nickname into an inline onclick handler.
+document.addEventListener('click', (e) => {
+    const item = e.target.closest('.user-item');
+    if (!item) return;
+    const userId = parseInt(item.dataset.userId, 10);
+    const contact = state.users.find(u => u.id === userId);
+    if (contact) renderChat(contact.id, contact.nickname);
+});
+
 async function loadPosts() {
     const container = document.getElementById('posts-container');
     try {
-        const response = await fetch('/api/posts/');
+        const response = await apiFetch('/api/posts/');
         if (!response.ok) throw new Error('Failed to load posts');
 
         const posts = await response.json();
@@ -492,6 +591,7 @@ async function loadPosts() {
 }
 
 function renderFeed() {
+    if (state.view !== 'feed') return; // a post detail is open in this column
     const container = document.getElementById('posts-container');
     if (!container) return;
 
@@ -508,7 +608,7 @@ function renderFeed() {
     container.innerHTML = displayPosts.map(post => `
         <div class="post">
             <div class="post-header">
-                <span>${post.nickname}</span>
+                <span>${escapeHTML(post.nickname)}</span>
                 <span>${new Date(post.created_at).toLocaleString()}</span>
             </div>
             <h3 style="margin: 0.5rem 0; color: #bb86fc;">${escapeHTML(post.title)} <span style="font-size: 0.8em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; margin-left: 10px;">${escapeHTML(post.category)}</span></h3>
@@ -537,14 +637,23 @@ document.addEventListener('click', (e) => {
 
 // ... (renderPostDetail and other functions) ...
 
-// AFTER other window exposures
+// The post detail is rendered inside the feed column so that the chat/users
+// sidebar stays visible at all times, as required.
 async function renderPostDetail(post) {
-    app.innerHTML = `
-         <div class="container" style="display: block;">
-            <button class="btn-link" style="text-align: left; margin-bottom: 1rem;" onclick="renderHome()">← Back to Feed</button>
+    if (!document.getElementById('posts-container')) {
+        await renderHome();
+    }
+
+    const container = document.getElementById('posts-container');
+    if (!container) return;
+
+    state.view = 'post';
+    container.innerHTML = `
+         <div>
+            <button class="btn-link" style="text-align: left; margin-bottom: 1rem;" onclick="backToFeed()">← Back to Feed</button>
             <div class="card" style="margin-bottom: 2rem; border-color: #bb86fc;">
                 <div class="post-header">
-                    <span>${post.nickname}</span>
+                    <span>${escapeHTML(post.nickname)}</span>
                     <span>${new Date(post.created_at).toLocaleString()}</span>
                 </div>
                 <h2 style="margin: 0.5rem 0; border: none;">${escapeHTML(post.title)} <span style="font-size: 0.6em; color: #e0e0e0; border: 1px solid #666; padding: 2px 6px; border-radius: 4px; vertical-align: middle;">${escapeHTML(post.category)}</span></h2>
@@ -578,10 +687,15 @@ async function renderPostDetail(post) {
     loadComments(post.id);
 }
 
+function backToFeed() {
+    state.view = 'feed';
+    renderFeed();
+}
+
 async function loadComments(postId) {
     const list = document.getElementById('comments-list');
     try {
-        const response = await fetch(`/api/comments?post_id=${postId}`);
+        const response = await apiFetch(`/api/comments?post_id=${postId}`);
         const comments = await response.json();
         if (!comments || comments.length === 0) {
             list.innerHTML = '<p style="color: #666; font-style: italic;">No comments yet.</p>';
@@ -590,7 +704,7 @@ async function loadComments(postId) {
         list.innerHTML = comments.map(c => `
             <div style="border-bottom: 1px solid #444; padding: 0.5rem 0; margin-bottom: 0.5rem;">
                 <div style="font-size: 0.8rem; color: #888; margin-bottom: 0.2rem;">
-                    <span style="color: #bb86fc;">${c.nickname}</span> • ${new Date(c.created_at).toLocaleString()}
+                    <span style="color: #bb86fc;">${escapeHTML(c.nickname)}</span> • ${new Date(c.created_at).toLocaleString()}
                 </div>
                 <p>${escapeHTML(c.content)}</p>
                  <div class="reaction-buttons" data-comment-id="${c.id}" style="margin-top: 5px; display: flex; gap: 10px;">
@@ -608,11 +722,11 @@ async function loadComments(postId) {
     }
 }
 
-function renderLogin() {
+function renderLogin(notice) {
     app.innerHTML = `
         <div class="auth-box">
             <h2>Login</h2>
-            <div id="error-box" class="error-msg"></div>
+            <div id="error-box" class="error-msg" ${notice ? 'style="display:block;"' : ''}>${notice ? escapeHTML(notice) : ''}</div>
             <form id="login-form">
                 <div class="input-group">
                     <label>Email or Nickname</label>
@@ -678,9 +792,9 @@ function renderRegister() {
 
 // Handlers
 async function handleLogin(e) { e.preventDefault(); submitAuthForm(e, '/api/login', async () => { state.isLoggedIn = true; logoutBtn.style.display = 'block'; await fetchUserInfo(); initWebSocket(); renderHome(); }); }
-async function handleRegister(e) { e.preventDefault(); submitAuthForm(e, '/api/register', () => { alert('Success'); renderLogin(); }); }
-async function handleCreateComment(e, postId) { e.preventDefault(); /* ... */ const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('comment-error'); data.post_id = parseInt(data.post_id); try { const response = await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadComments(postId); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
-async function handleCreatePost(e) { e.preventDefault(); const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('home-error'); try { const response = await fetch('/api/posts/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadPosts(); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
+async function handleRegister(e) { e.preventDefault(); submitAuthForm(e, '/api/register', () => { renderLogin('Registration successful, you can log in now.'); }); }
+async function handleCreateComment(e, postId) { e.preventDefault(); /* ... */ const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('comment-error'); data.post_id = parseInt(data.post_id); try { const response = await apiFetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadComments(postId); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
+async function handleCreatePost(e) { e.preventDefault(); const formData = new FormData(e.target); const data = Object.fromEntries(formData.entries()); const errorBox = document.getElementById('home-error'); try { const response = await apiFetch('/api/posts/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); if (response.ok) { e.target.reset(); loadPosts(); } else { errorBox.textContent = await response.text(); errorBox.style.display = 'block'; } } catch (error) { errorBox.textContent = 'Network error'; errorBox.style.display = 'block'; } }
 
 async function submitAuthForm(e, url, onSuccess) {
     const formData = new FormData(e.target);
@@ -695,11 +809,25 @@ async function submitAuthForm(e, url, onSuccess) {
 }
 
 logoutBtn.addEventListener('click', async () => {
-    await fetch('/api/logout', { method: 'POST' });
-    document.cookie = 'session_token=; Max-Age=0; path=/;';
+    try {
+        await fetch('/api/logout', { method: 'POST' });
+    } catch (_) {}
+
+    // The session cookie is HttpOnly, only the server can clear it.
     state.isLoggedIn = false;
+    state.user = null;
+    state.users = [];
+    state.onlineUsers.clear();
+    state.unread.clear();
+    state.activeChatUser = null;
     logoutBtn.style.display = 'none';
-    if (state.socket) state.socket.close();
+
+    if (state.socket) {
+        state.socket.onclose = null; // no reconnect attempts after an explicit logout
+        state.socket.close();
+        state.socket = null;
+    }
+
     renderLogin();
 });
 
@@ -711,6 +839,7 @@ window.renderPostDetail = renderPostDetail;
 window.renderChat = renderChat;
 window.closeChat = closeChat;
 window.setCategory = setCategory;
+window.backToFeed = backToFeed;
 
 
 // ============================================
@@ -748,7 +877,7 @@ document.addEventListener('click', async (e) => {
 
 
     try {
-        const response = await fetch(endpoint, {
+        const response = await apiFetch(endpoint, {
             method: 'POST',
             credentials: 'include',
             headers: {

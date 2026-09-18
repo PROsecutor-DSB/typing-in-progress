@@ -5,23 +5,14 @@ import (
 	"log"
 	"net/http"
 	"real-time-forum/internal/chat"
-	"real-time-forum/internal/models"
 	"strconv"
-	"time"
 )
 
+// messagePageSize is the number of messages returned per chat history request.
+const messagePageSize = 10
+
 func (h *Handler) ServeWs(hub *chat.Hub, w http.ResponseWriter, r *http.Request) {
-	// Auth Guard
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil || session.ExpiresAt.Before(time.Now()) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
+	session := sessionFrom(r)
 
 	conn, err := chat.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -42,7 +33,7 @@ func (h *Handler) ServeWs(hub *chat.Hub, w http.ResponseWriter, r *http.Request)
 		Send:     make(chan []byte, 256),
 		UserID:   session.UserID,
 		Nickname: nickname,
-		MsgModel: &models.MessageModel{DB: h.Users.DB}, // Reuse DB connection
+		MsgModel: h.Messages,
 	}
 
 	client.Hub.Register <- client
@@ -59,30 +50,18 @@ func (h *Handler) GetChatHistoryHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil || session.ExpiresAt.Before(time.Now()) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	otherUserIDStr := r.URL.Query().Get("user_id")
-	otherUserID, err := strconv.Atoi(otherUserIDStr)
-	if err != nil {
+	otherUserID, err := strconv.Atoi(r.URL.Query().Get("user_id"))
+	if err != nil || otherUserID <= 0 {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
-	offsetStr := r.URL.Query().Get("offset")
-	offset, _ := strconv.Atoi(offsetStr) // Default 0
+	offset, err := strconv.Atoi(r.URL.Query().Get("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
 
-	limit := 20
-
-	msgs, err := (&models.MessageModel{DB: h.Posts.DB}).GetHistory(session.UserID, otherUserID, limit, offset)
+	msgs, err := h.Messages.GetHistory(sessionFrom(r).UserID, otherUserID, messagePageSize, offset)
 	if err != nil {
 		http.Error(w, "Failed to fetch history", http.StatusInternalServerError)
 		return
@@ -92,47 +71,20 @@ func (h *Handler) GetChatHistoryHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(msgs)
 }
 
+// GetUsersHandler returns the chat contacts of the current user, ordered by the
+// most recent conversation.
 func (h *Handler) GetUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	c, err := r.Cookie("session_token")
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	session, err := h.Sessions.GetByToken(c.Value)
-	if err != nil || session.ExpiresAt.Before(time.Now()) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	rows, err := h.Users.DB.Query("SELECT id, nickname, email FROM users ORDER BY nickname ASC")
+	contacts, err := h.Users.ListChatContacts(sessionFrom(r).UserID)
 	if err != nil {
 		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	var users []struct {
-		ID       int    `json:"id"`
-		Nickname string `json:"nickname"`
-	}
-	for rows.Next() {
-		var u struct {
-			ID       int    `json:"id"`
-			Nickname string `json:"nickname"`
-			Email    string
-		}
-		rows.Scan(&u.ID, &u.Nickname, &u.Email)
-		users = append(users, struct {
-			ID       int    `json:"id"`
-			Nickname string `json:"nickname"`
-		}{u.ID, u.Nickname})
-	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(users)
+	json.NewEncoder(w).Encode(contacts)
 }

@@ -3,3 +3,5 @@ database.db
 *.o
 *.a
 .DS_Store
+database.db-wal
+database.db-shm
